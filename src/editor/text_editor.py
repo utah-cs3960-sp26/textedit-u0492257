@@ -32,9 +32,14 @@ class TextEditor(QPlainTextEdit):
     
     def _setup_appearance(self):
         """Configure the vintage terminal look."""
-        font = QFont("Courier New", 12)
+        font = QFont()
         font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setFamilies(["Courier New", "Consolas", "DejaVu Sans Mono", "Liberation Mono", "monospace"])
+        font.setPointSize(12)
+        font.setFixedPitch(True)
         self.setFont(font)
+        
+        self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
     
     def _connect_signals(self):
         """Connect signals for line number updates."""
