@@ -39,10 +39,54 @@ def setup_menu_bar(main_window, file_actions):
     exit_action.triggered.connect(main_window.close)
     file_menu.addAction(exit_action)
     
+    # Edit menu
+    edit_menu = menu_bar.addMenu("&Edit")
+    editor = main_window.editor
+    
+    undo_action = QAction("&Undo", main_window)
+    undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+    undo_action.triggered.connect(editor.undo)
+    edit_menu.addAction(undo_action)
+    
+    redo_action = QAction("&Redo", main_window)
+    redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+    redo_action.triggered.connect(editor.redo)
+    edit_menu.addAction(redo_action)
+    
+    edit_menu.addSeparator()
+    
+    cut_action = QAction("Cu&t", main_window)
+    cut_action.setShortcut(QKeySequence.StandardKey.Cut)
+    cut_action.triggered.connect(editor.cut)
+    edit_menu.addAction(cut_action)
+    
+    copy_action = QAction("&Copy", main_window)
+    copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+    copy_action.triggered.connect(editor.copy)
+    edit_menu.addAction(copy_action)
+    
+    paste_action = QAction("&Paste", main_window)
+    paste_action.setShortcut(QKeySequence.StandardKey.Paste)
+    paste_action.triggered.connect(editor.paste)
+    edit_menu.addAction(paste_action)
+    
+    edit_menu.addSeparator()
+    
+    select_all_action = QAction("Select &All", main_window)
+    select_all_action.setShortcut(QKeySequence.StandardKey.SelectAll)
+    select_all_action.triggered.connect(editor.selectAll)
+    edit_menu.addAction(select_all_action)
+    
     return {
         "new": new_action,
         "open": open_action,
         "save": save_action,
         "save_as": save_as_action,
         "exit": exit_action,
+        "undo": undo_action,
+        "redo": redo_action,
+        "cut": cut_action,
+        "copy": copy_action,
+        "paste": paste_action,
+        "select_all": select_all_action,
     }
