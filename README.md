@@ -24,4 +24,13 @@ User can now double click on the file explorer to open multiple tabs in the wind
 Current feature I am still in progress of working on. User can drag and drop tabs into different areas of the screen to automatically create a divided, split-screen view. Right now, there are some bugs with closing tabs, equally dividing the screen size, but the basic functionality is there and just needs a few tweaks. In the process of adding more tests to fix these bugs.
 
 
+## R3
+
+### Automatic indentation and bracket and quote matching
+When typing left brackets, parentheses, or quotes, right side automatically goes to the right of the cursor. Pressing tab while cursor is to the left of the right bracket, or similar element, causes the cursor to jump to the right side of the right bracket. Additionally, when hitting return after a bracket or left parenthesis, the line is automatically indented. Additionally, if the user types a left element and immediately deletes it, the right element is also deleted, but not if the user selects the left element and deletes. While support to detect a specific language is not enabled, these features make coding in the text editor more natural for most programming languages.
+<img width="269" height="58" alt="Screenshot 2026-01-21 at 1 54 32 PM" src="https://github.com/user-attachments/assets/5291308b-4729-4616-b1ac-f6d8a144d486" />
+
+### Split Screen Reworked
+I reprompted the code for split screen to get rid of previous bugs. Now, drag and drop equally divides the screen, and deleting tabs where that tab is the only one in a split-view causes the tabs on the other side of the split to take up the full window.
+
 
