@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from actions.file_actions import FileActions
 from ui.menu_bar import setup_menu_bar
 from ui.file_explorer import FileExplorer
-from ui.split_view import SplitContainer
+from ui.split_view import SplitViewManager
 
 
 class MainWindow(QMainWindow):
@@ -15,27 +15,26 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        # Create split container with tab widget factory
-        self.split_container = SplitContainer(self._create_tab_widget, self)
+        # Create split view manager and file explorer
+        self.split_view_manager = SplitViewManager()
+        self.split_view_manager.tab_widget.current_document_changed.connect(self.update_title)
         self.file_explorer = FileExplorer(self)
         self.file_actions = FileActions(self)
         
         self._setup_ui()
         self._connect_signals()
     
-    def _create_tab_widget(self):
-        """Factory function to create new tab widgets."""
-        from ui.tab_widget import TabWidget
-        tw = TabWidget(create_initial_tab=True)
-        tw.current_document_changed.connect(self.update_title)
-        return tw
+    @property
+    def tab_widget(self):
+        """Get the primary tab widget (for compatibility)."""
+        return self.split_view_manager.tab_widget
     
     def _setup_ui(self):
         """Initialize the user interface."""
-        # Create splitter for file explorer and split container
+        # Create splitter for file explorer and split view manager
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.file_explorer)
-        self.splitter.addWidget(self.split_container)
+        self.splitter.addWidget(self.split_view_manager)
         
         # Set initial sizes (200px for explorer, rest for editor)
         self.splitter.setSizes([200, 600])
@@ -52,28 +51,19 @@ class MainWindow(QMainWindow):
         """Connect signals to update window state."""
         self.file_explorer.file_selected.connect(self._on_file_selected)
     
-    @property
-    def tab_widget(self):
-        """Get the current/main tab widget."""
-        return self.split_container.get_tab_widget()
-    
     def _on_file_selected(self, file_path):
         """Open file selected from file explorer in a new tab."""
-        tw = self.tab_widget
-        if tw:
-            tw.new_tab(file_path)
+        self.tab_widget.new_tab(file_path)
     
     @property
     def editor(self):
         """Get the current editor (for compatibility)."""
-        tw = self.tab_widget
-        return tw.current_editor if tw else None
+        return self.split_view_manager.current_editor
     
     @property
     def document(self):
         """Get the current document (for compatibility)."""
-        tw = self.tab_widget
-        return tw.current_document if tw else None
+        return self.split_view_manager.current_document
     
     def toggle_file_explorer(self):
         """Toggle visibility of the file explorer."""

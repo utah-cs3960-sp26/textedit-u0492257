@@ -1,383 +1,407 @@
-"""Split view container for drag-and-drop tab splitting."""
+"""Split view manager for editor panes."""
 
-from enum import Enum, auto
-
-from PyQt6.QtWidgets import QWidget, QSplitter, QVBoxLayout
-from PyQt6.QtCore import Qt, pyqtSignal, QRect
+from PyQt6.QtWidgets import QSplitter, QWidget, QVBoxLayout, QHBoxLayout
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QTimer
 from PyQt6.QtGui import QPainter, QColor
 
-
-class DropZone(Enum):
-    """Drop zones for split view."""
-    LEFT = auto()
-    RIGHT = auto()
-    TOP = auto()
-    BOTTOM = auto()
+from ui.tab_widget import TabWidget
 
 
-# Global reference to track the current drag operation
-_current_drag_tab = None
-_current_drag_source = None
-
-
-class DropOverlay(QWidget):
-    """Overlay that shows drop zone highlights during drag."""
+class DropZoneOverlay(QWidget):
+    """Overlay widget that shows drop zones when dragging files."""
     
-    dropped = pyqtSignal(object)  # Emits the drop zone
+    zone_selected = pyqtSignal(str)  # 'top', 'bottom', 'left', 'right'
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-        self.setAcceptDrops(True)
+        self.setMouseTracking(True)
         self._active_zone = None
-        self._zones = {}
-        self.hide()
+        self._visible = False
     
-    def showOverlay(self):
-        """Show the overlay and calculate zones."""
-        self.setGeometry(self.parent().rect())
-        self._calculate_zones()
-        self.show()
+    def show_zones(self):
+        """Show the drop zone overlay."""
+        self._visible = True
         self.raise_()
+        self.show()
+        self.update()
     
-    def hideOverlay(self):
-        """Hide the overlay."""
+    def hide_zones(self):
+        """Hide the drop zone overlay."""
+        self._visible = False
         self._active_zone = None
         self.hide()
     
-    def _calculate_zones(self):
-        """Calculate the drop zone rectangles - simple halves."""
-        w, h = self.width(), self.height()
-        half_w = w // 2
-        half_h = h // 2
-        
-        self._zones = {
-            DropZone.LEFT: QRect(0, 0, half_w, h),
-            DropZone.RIGHT: QRect(half_w, 0, w - half_w, h),
-            DropZone.TOP: QRect(0, 0, w, half_h),
-            DropZone.BOTTOM: QRect(0, half_h, w, h - half_h),
-        }
-    
-    def zoneAt(self, pos):
-        """Get the drop zone at the given position based on which half the cursor is in."""
-        w, h = self.width(), self.height()
+    def get_zone_at(self, pos):
+        """Determine which zone the position is in based on which half the cursor is closest to."""
+        rect = self.rect()
+        w, h = rect.width(), rect.height()
         x, y = pos.x(), pos.y()
         
-        # Determine if horizontal or vertical split based on position
-        # Use distance from center to determine primary axis
-        dx = abs(x - w / 2) / (w / 2)  # 0 at center, 1 at edge
-        dy = abs(y - h / 2) / (h / 2)  # 0 at center, 1 at edge
+        dist_top = y
+        dist_bottom = h - y
+        dist_left = x
+        dist_right = w - x
         
-        if dx > dy:
-            # Closer to left/right edge - horizontal split
-            return DropZone.LEFT if x < w / 2 else DropZone.RIGHT
+        min_dist = min(dist_top, dist_bottom, dist_left, dist_right)
+        
+        if min_dist == dist_top:
+            return 'top'
+        elif min_dist == dist_bottom:
+            return 'bottom'
+        elif min_dist == dist_left:
+            return 'left'
         else:
-            # Closer to top/bottom edge - vertical split
-            return DropZone.TOP if y < h / 2 else DropZone.BOTTOM
+            return 'right'
     
-    def setActiveZone(self, zone):
-        """Set the active (highlighted) zone."""
+    def get_zone_rect(self, zone):
+        """Get the rectangle for a specific zone - highlights half the window."""
+        rect = self.rect()
+        w, h = rect.width(), rect.height()
+        
+        if zone == 'top':
+            return QRect(0, 0, w, h // 2)
+        elif zone == 'bottom':
+            return QRect(0, h // 2, w, h // 2)
+        elif zone == 'left':
+            return QRect(0, 0, w // 2, h)
+        elif zone == 'right':
+            return QRect(w // 2, 0, w // 2, h)
+        return QRect()
+    
+    def set_active_zone(self, zone):
+        """Set the currently highlighted zone."""
         if self._active_zone != zone:
             self._active_zone = zone
             self.update()
     
     def paintEvent(self, event):
-        """Paint the drop zone highlights."""
+        if not self._visible:
+            return
+        
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        w, h = self.width(), self.height()
-        half_w, half_h = w // 2, h // 2
+        if self._active_zone:
+            zone_rect = self.get_zone_rect(self._active_zone)
+            painter.fillRect(zone_rect, QColor(0, 170, 170, 80))
+            painter.setPen(QColor(0, 170, 170, 200))
+            painter.drawRect(zone_rect)
+
+
+class SplitPane(QWidget):
+    """A pane containing a tab widget with drop zone support."""
+    
+    split_requested = pyqtSignal(object, str, str)  # pane, direction, file_path
+    split_with_tab_requested = pyqtSignal(object, str, object, int)  # pane, direction, source_tab_widget, tab_index
+    close_requested = pyqtSignal(object)  # pane
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
         
-        # Calculate the highlight rect based on active zone
-        if self._active_zone == DropZone.LEFT:
-            highlight_rect = QRect(0, 0, half_w, h)
-        elif self._active_zone == DropZone.RIGHT:
-            highlight_rect = QRect(half_w, 0, w - half_w, h)
-        elif self._active_zone == DropZone.TOP:
-            highlight_rect = QRect(0, 0, w, half_h)
-        elif self._active_zone == DropZone.BOTTOM:
-            highlight_rect = QRect(0, half_h, w, h - half_h)
-        else:
-            highlight_rect = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         
-        # Draw dim overlay on the non-highlighted half
-        dim_color = QColor(0, 0, 0, 100)
-        if highlight_rect:
-            painter.fillRect(self.rect(), dim_color)
-            
-            # Highlight the active zone
-            highlight_color = QColor(0, 170, 170, 80)
-            painter.fillRect(highlight_rect, highlight_color)
-            
-            # Draw border
-            border_color = QColor(0, 200, 200)
-            painter.setPen(border_color)
-            painter.drawRect(highlight_rect.adjusted(2, 2, -2, -2))
-        else:
-            painter.fillRect(self.rect(), dim_color)
+        self.tab_widget = TabWidget()
+        self.tab_widget.last_tab_closed.connect(self._on_last_tab_closed)
+        layout.addWidget(self.tab_widget)
+        
+        self.drop_overlay = DropZoneOverlay(self)
+        self.drop_overlay.hide()
+    
+    def _on_last_tab_closed(self):
+        """Handle when the last tab in this pane is closed."""
+        self.close_requested.emit(self)
+    
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.drop_overlay.setGeometry(self.rect())
     
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat("application/x-tab-drag"):
+        mime = event.mimeData()
+        if mime.hasUrls() or mime.hasText() or mime.hasFormat("application/x-tab-index"):
             event.acceptProposedAction()
+            self.drop_overlay.show_zones()
     
     def dragMoveEvent(self, event):
-        zone = self.zoneAt(event.position().toPoint())
-        self.setActiveZone(zone)
+        zone = self.drop_overlay.get_zone_at(event.position().toPoint())
+        self.drop_overlay.set_active_zone(zone)
         event.acceptProposedAction()
     
     def dragLeaveEvent(self, event):
-        self.setActiveZone(None)
+        self.drop_overlay.hide_zones()
     
     def dropEvent(self, event):
-        zone = self.zoneAt(event.position().toPoint())
-        if zone:
-            self.dropped.emit(zone)
+        zone = self.drop_overlay.get_zone_at(event.position().toPoint())
+        self.drop_overlay.hide_zones()
+        
+        mime = event.mimeData()
+        
+        if mime.hasFormat("application/x-tab-index"):
+            tab_index = int(mime.data("application/x-tab-index").data().decode())
+            source = event.source()
+            if source and hasattr(source, 'parent'):
+                source_tab_widget = source.parent()
+                if zone:
+                    self.split_with_tab_requested.emit(self, zone, source_tab_widget, tab_index)
             event.acceptProposedAction()
-        self.hideOverlay()
+            return
+        
+        file_path = None
+        if mime.hasUrls():
+            urls = mime.urls()
+            if urls:
+                file_path = urls[0].toLocalFile()
+        elif mime.hasText():
+            file_path = mime.text()
+        
+        if file_path and zone:
+            self.split_requested.emit(self, zone, file_path)
+        elif file_path:
+            self.tab_widget.open_file(file_path)
+        
+        event.acceptProposedAction()
 
 
-class SplitContainer(QWidget):
-    """Container that can hold a TabWidget or be split into multiple containers."""
+class SplitViewManager(QWidget):
+    """Manages split editor panes with original size restoration."""
     
-    def __init__(self, tab_widget_factory, parent=None, create_initial=True):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self._tab_widget_factory = tab_widget_factory
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(0)
+        self._original_size = None
+        self._is_split = False
+        self._panes = []
+        self._splitters = []
         
-        self._splitter = None
-        self._tab_widget = None
-        self._children = []
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_layout.setSpacing(0)
         
-        # Create initial tab widget only if requested
-        if create_initial:
-            self._create_tab_widget()
-        
-        # Drop overlay
-        self._overlay = DropOverlay(self)
-        self._overlay.dropped.connect(self._on_drop)
-        self._overlay.hide()
+        self._root_pane = self._create_pane()
+        self._main_layout.addWidget(self._root_pane)
+        self._panes.append(self._root_pane)
     
-    def _create_tab_widget(self):
-        """Create a new tab widget for this container."""
-        self._tab_widget = self._tab_widget_factory()
-        self._tab_widget.tab_drag_started.connect(self._on_tab_drag_started)
-        self._tab_widget.tab_drag_ended.connect(self._on_tab_drag_ended)
-        self._layout.addWidget(self._tab_widget)
+    def _create_pane(self):
+        """Create a new split pane."""
+        pane = SplitPane()
+        pane.split_requested.connect(self._handle_split)
+        pane.split_with_tab_requested.connect(self._handle_tab_split)
+        pane.close_requested.connect(self._handle_pane_close)
+        return pane
     
-    def _on_tab_drag_started(self, tab):
-        """Show overlay when tab drag starts."""
-        global _current_drag_tab, _current_drag_source
-        try:
-            _current_drag_tab = tab
-            _current_drag_source = self._tab_widget
-            self._show_all_overlays()
-        except RuntimeError:
-            pass
+    @property
+    def original_size(self):
+        """Get the stored original window size."""
+        return self._original_size
     
-    def _on_tab_drag_ended(self):
-        """Hide overlay when tab drag ends."""
-        global _current_drag_tab, _current_drag_source
-        try:
-            _current_drag_tab = None
-            _current_drag_source = None
-            self._hide_all_overlays()
-        except RuntimeError:
-            pass
+    @property
+    def is_split(self):
+        """Check if currently in split view mode."""
+        return self._is_split
     
-    def _show_all_overlays(self):
-        """Show overlays on this and all child containers."""
-        try:
-            if self._tab_widget:
-                self._overlay.showOverlay()
-            for child in self._children:
-                child._show_all_overlays()
-            # Also notify parent to show sibling overlays
-            parent = self.parent()
-            if isinstance(parent, QSplitter):
-                grandparent = parent.parent()
-                if isinstance(grandparent, SplitContainer):
-                    grandparent._show_sibling_overlays(self)
-        except RuntimeError:
-            pass
-    
-    def _show_sibling_overlays(self, exclude):
-        """Show overlays on children except the excluded one."""
-        try:
-            for child in self._children:
-                if child != exclude:
-                    child._show_all_overlays()
-        except RuntimeError:
-            pass
-    
-    def _hide_all_overlays(self):
-        """Hide overlays on this and all child containers."""
-        try:
-            self._overlay.hideOverlay()
-            for child in self._children:
-                child._hide_all_overlays()
-        except RuntimeError:
-            pass
-    
-    def get_tab_widget(self):
-        """Get the tab widget (for the main/first container)."""
-        if self._tab_widget:
-            return self._tab_widget
-        if self._children:
-            return self._children[0].get_tab_widget()
+    @property
+    def tab_widget(self):
+        """Get the primary tab widget (for compatibility)."""
+        if self._panes:
+            return self._panes[0].tab_widget
         return None
     
-    def _on_drop(self, zone):
-        """Handle a drop on this container."""
-        global _current_drag_tab, _current_drag_source
-        
-        if not _current_drag_tab:
-            return
-        
-        tab = _current_drag_tab
-        source = _current_drag_source
-        
-        # Create split
-        source.remove_tab_for_drag(tab)
-        self._split_with_tab(zone, tab)
+    @property
+    def current_editor(self):
+        """Get the current editor from the focused pane."""
+        if self._panes:
+            return self._panes[0].tab_widget.current_editor
+        return None
     
-    def _split_with_tab(self, zone, tab):
-        """Split this container and add tab to new section."""
-        if not self._tab_widget:
-            return
+    @property
+    def current_document(self):
+        """Get the current document from the focused pane."""
+        if self._panes:
+            return self._panes[0].tab_widget.current_document
+        return None
+    
+    def store_original_size(self, size):
+        """Store the original window size before splitting."""
+        if self._original_size is None:
+            self._original_size = QSize(size)
+    
+    def _handle_split(self, source_pane, direction, file_path):
+        """Handle a split request from a pane."""
+        if not self._is_split:
+            window = self.window()
+            if window:
+                self.store_original_size(window.size())
         
-        # Determine orientation
-        if zone in (DropZone.LEFT, DropZone.RIGHT):
+        new_pane = self._create_pane()
+        self._panes.append(new_pane)
+        
+        if file_path:
+            new_pane.tab_widget.open_file(file_path)
+        
+        if direction in ('left', 'right'):
             orientation = Qt.Orientation.Horizontal
+            total_size = source_pane.width()
         else:
             orientation = Qt.Orientation.Vertical
+            total_size = source_pane.height()
         
-        # Remove current tab widget from layout
-        self._layout.removeWidget(self._tab_widget)
-        self._overlay.hide()
+        half_size = total_size // 2
         
-        # Create splitter
-        self._splitter = QSplitter(orientation)
-        self._splitter.setHandleWidth(4)
-        self._splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #333;
-            }
-            QSplitter::handle:hover {
-                background-color: #00aaaa;
-            }
-        """)
+        splitter = QSplitter(orientation)
+        self._splitters.append(splitter)
         
-        # Create two child containers without initial tab widgets (they'll be replaced)
-        child1 = SplitContainer(self._tab_widget_factory, self, create_initial=False)
-        child2 = SplitContainer(self._tab_widget_factory, self, create_initial=False)
-        
-        # Create new tab widget WITHOUT initial tab, then add the dragged tab
-        from ui.tab_widget import TabWidget
-        new_tw = TabWidget(create_initial_tab=False)
-        new_tw.add_tab_from_drag(tab)
-        
-        # Disconnect signals from the old tab widget before transferring
-        old_tw = self._tab_widget
-        self._disconnect_tab_widget(old_tw)
-        self._tab_widget = None
-        
-        # Transfer widgets to appropriate children
-        if zone in (DropZone.RIGHT, DropZone.BOTTOM):
-            child1._replace_tab_widget(old_tw)
-            child2._replace_tab_widget(new_tw)
-        else:
-            child1._replace_tab_widget(new_tw)
-            child2._replace_tab_widget(old_tw)
-        self._children = [child1, child2]
-        
-        self._splitter.addWidget(child1)
-        self._splitter.addWidget(child2)
-        self._splitter.setSizes([1, 1])  # Equal sizes
-        
-        self._layout.addWidget(self._splitter)
-    
-    def _disconnect_tab_widget(self, tab_widget):
-        """Safely disconnect all signals from a tab widget."""
-        if not tab_widget:
-            return
-        try:
-            tab_widget.tab_drag_started.disconnect(self._on_tab_drag_started)
-        except (TypeError, RuntimeError):
-            pass
-        try:
-            tab_widget.tab_drag_ended.disconnect(self._on_tab_drag_ended)
-        except (TypeError, RuntimeError):
-            pass
-        try:
-            tab_widget.all_tabs_closed.disconnect(self._on_all_tabs_closed)
-        except (TypeError, RuntimeError):
-            pass
-        tab_widget._is_in_split = False
-    
-    def _replace_tab_widget(self, tab_widget):
-        """Replace the tab widget with an existing one."""
-        if self._tab_widget:
-            self._layout.removeWidget(self._tab_widget)
-            self._disconnect_tab_widget(self._tab_widget)
-        
-        self._tab_widget = tab_widget
-        self._tab_widget.setParent(self)
-        self._tab_widget._is_in_split = True
-        self._tab_widget.tab_drag_started.connect(self._on_tab_drag_started)
-        self._tab_widget.tab_drag_ended.connect(self._on_tab_drag_ended)
-        self._tab_widget.all_tabs_closed.connect(self._on_all_tabs_closed)
-        self._layout.addWidget(self._tab_widget)
-    
-    def _on_all_tabs_closed(self):
-        """Handle when all tabs in this container are closed - collapse the split."""
-        parent = self.parent()
+        parent = source_pane.parent()
         if isinstance(parent, QSplitter):
-            grandparent = parent.parent()
-            if isinstance(grandparent, SplitContainer):
-                grandparent._collapse_split(self)
+            index = parent.indexOf(source_pane)
+            source_pane.setParent(None)
+            
+            if direction in ('left', 'top'):
+                splitter.addWidget(new_pane)
+                splitter.addWidget(source_pane)
+            else:
+                splitter.addWidget(source_pane)
+                splitter.addWidget(new_pane)
+            
+            parent.insertWidget(index, splitter)
+        else:
+            self._main_layout.removeWidget(source_pane)
+            source_pane.setParent(None)
+            
+            if direction in ('left', 'top'):
+                splitter.addWidget(new_pane)
+                splitter.addWidget(source_pane)
+            else:
+                splitter.addWidget(source_pane)
+                splitter.addWidget(new_pane)
+            
+            self._main_layout.addWidget(splitter)
+        
+        QTimer.singleShot(0, lambda: splitter.setSizes([half_size, half_size]))
+        self._is_split = True
     
-    def _collapse_split(self, empty_child):
-        """Collapse the split, keeping the non-empty child's content."""
-        if not self._splitter or len(self._children) != 2:
+    def _handle_tab_split(self, source_pane, direction, source_tab_widget, tab_index):
+        """Handle a split request from dragging a tab."""
+        if not self._is_split:
+            window = self.window()
+            if window:
+                self.store_original_size(window.size())
+        
+        tab = source_tab_widget._tabs[tab_index] if 0 <= tab_index < len(source_tab_widget._tabs) else None
+        if not tab:
             return
         
-        # Find the surviving child (the one that's not empty)
-        surviving_child = None
-        for child in self._children:
-            if child != empty_child:
-                surviving_child = child
-                break
+        content = tab.editor.toPlainText()
+        file_path = tab.document.file_path
+        is_modified = tab.document.is_modified
         
-        if not surviving_child:
-            return
+        new_pane = self._create_pane()
+        self._panes.append(new_pane)
         
-        # Get the tab widget from the surviving child
-        surviving_tw = surviving_child._tab_widget
-        if not surviving_tw:
-            return
+        new_tab = new_pane.tab_widget.current_tab()
+        new_tab.editor.setPlainText(content)
+        new_tab.document.file_path = file_path
+        new_tab.document.is_modified = is_modified
+        new_pane.tab_widget._update_tab_title(new_tab)
         
-        # Remove the splitter
-        self._layout.removeWidget(self._splitter)
+        source_tab_widget._close_tab(tab)
         
-        # Clean up children
-        for child in self._children:
-            child.setParent(None)
-            child.deleteLater()
-        self._children = []
+        if direction in ('left', 'right'):
+            orientation = Qt.Orientation.Horizontal
+            total_size = source_pane.width()
+        else:
+            orientation = Qt.Orientation.Vertical
+            total_size = source_pane.height()
         
-        # Delete splitter
-        self._splitter.deleteLater()
-        self._splitter = None
+        half_size = total_size // 2
         
-        # Disconnect signals from the surviving child before taking ownership
-        surviving_child._disconnect_tab_widget(surviving_tw)
+        splitter = QSplitter(orientation)
+        self._splitters.append(splitter)
         
-        # Take ownership of the surviving tab widget
-        self._tab_widget = surviving_tw
-        self._tab_widget.setParent(self)
-        self._tab_widget.tab_drag_started.connect(self._on_tab_drag_started)
-        self._tab_widget.tab_drag_ended.connect(self._on_tab_drag_ended)
-        self._layout.addWidget(self._tab_widget)
+        parent = source_pane.parent()
+        if isinstance(parent, QSplitter):
+            index = parent.indexOf(source_pane)
+            source_pane.setParent(None)
+            
+            if direction in ('left', 'top'):
+                splitter.addWidget(new_pane)
+                splitter.addWidget(source_pane)
+            else:
+                splitter.addWidget(source_pane)
+                splitter.addWidget(new_pane)
+            
+            parent.insertWidget(index, splitter)
+        else:
+            self._main_layout.removeWidget(source_pane)
+            source_pane.setParent(None)
+            
+            if direction in ('left', 'top'):
+                splitter.addWidget(new_pane)
+                splitter.addWidget(source_pane)
+            else:
+                splitter.addWidget(source_pane)
+                splitter.addWidget(new_pane)
+            
+            self._main_layout.addWidget(splitter)
+        
+        QTimer.singleShot(0, lambda: splitter.setSizes([half_size, half_size]))
+        self._is_split = True
+    
+    def close_pane(self, pane):
+        """Close a split pane and potentially restore original size."""
+        if pane not in self._panes or len(self._panes) <= 1:
+            return False
+        
+        self._panes.remove(pane)
+        
+        parent = pane.parent()
+        pane.setParent(None)
+        pane.deleteLater()
+        
+        if isinstance(parent, QSplitter):
+            if parent.count() == 1:
+                remaining = parent.widget(0)
+                grandparent = parent.parent()
+                
+                if isinstance(grandparent, QSplitter):
+                    index = grandparent.indexOf(parent)
+                    remaining.setParent(None)
+                    parent.setParent(None)
+                    grandparent.insertWidget(index, remaining)
+                else:
+                    remaining.setParent(None)
+                    parent.setParent(None)
+                    self._main_layout.addWidget(remaining)
+                
+                if parent in self._splitters:
+                    self._splitters.remove(parent)
+                parent.deleteLater()
+        
+        if len(self._panes) == 1:
+            self._is_split = False
+            self._restore_original_size()
+            return True
+        
+        return True
+    
+    def _handle_pane_close(self, pane):
+        """Handle close request from a pane."""
+        self.close_pane(pane)
+    
+    def _restore_original_size(self):
+        """Restore window to original size after closing all splits."""
+        if self._original_size is not None:
+            window = self.window()
+            if window:
+                window.resize(self._original_size)
+            self._original_size = None
+    
+    def close_all_splits(self):
+        """Close all split panes except the first one."""
+        while len(self._panes) > 1:
+            self.close_pane(self._panes[-1])
+    
+    def split_count(self):
+        """Return the number of active panes."""
+        return len(self._panes)

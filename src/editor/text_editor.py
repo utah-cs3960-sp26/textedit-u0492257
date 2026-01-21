@@ -116,3 +116,209 @@ class TextEditor(QPlainTextEdit):
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
             block_number += 1
+    
+    _BRACKET_PAIRS = {'(': ')', '[': ']', '{': '}'}
+    _QUOTE_CHARS = {'"', "'"}
+    _CLOSING_BRACKETS = {')', ']', '}'}
+    
+    def keyPressEvent(self, event):
+        """Handle key press events with automatic indentation and pair matching."""
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._handle_enter_key()
+            return
+        
+        text = event.text()
+        if text:
+            if text in self._BRACKET_PAIRS:
+                self._insert_pair(text, self._BRACKET_PAIRS[text])
+                return
+            if text in self._QUOTE_CHARS:
+                self._handle_quote(text)
+                return
+            if text in self._CLOSING_BRACKETS:
+                if self._skip_if_next_char(text):
+                    return
+        
+        if event.key() == Qt.Key.Key_Backspace:
+            if self._handle_backspace_pair():
+                return
+        
+        if event.key() == Qt.Key.Key_Tab:
+            if self._handle_tab_jump():
+                return
+        
+        super().keyPressEvent(event)
+    
+    def _insert_pair(self, opening: str, closing: str):
+        """Insert an opening bracket and its matching closing bracket."""
+        cursor = self.textCursor()
+        cursor.insertText(opening + closing)
+        cursor.movePosition(cursor.MoveOperation.Left)
+        self.setTextCursor(cursor)
+    
+    def _handle_quote(self, quote: str):
+        """Handle quote insertion with smart matching."""
+        cursor = self.textCursor()
+        doc = self.document()
+        pos = cursor.position()
+        
+        if pos < doc.characterCount() - 1:
+            next_char = doc.characterAt(pos)
+            if next_char == quote:
+                cursor.movePosition(cursor.MoveOperation.Right)
+                self.setTextCursor(cursor)
+                return
+        
+        cursor.insertText(quote + quote)
+        cursor.movePosition(cursor.MoveOperation.Left)
+        self.setTextCursor(cursor)
+    
+    def _skip_if_next_char(self, char: str) -> bool:
+        """Skip over the next character if it matches, instead of inserting."""
+        cursor = self.textCursor()
+        doc = self.document()
+        pos = cursor.position()
+        
+        if pos < doc.characterCount() - 1:
+            next_char = doc.characterAt(pos)
+            if next_char == char:
+                cursor.movePosition(cursor.MoveOperation.Right)
+                self.setTextCursor(cursor)
+                return True
+        return False
+    
+    def _handle_backspace_pair(self) -> bool:
+        """Delete both brackets/quotes if backspace is pressed between an empty pair."""
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            return False
+        
+        doc = self.document()
+        pos = cursor.position()
+        
+        if pos == 0 or pos >= doc.characterCount():
+            return False
+        
+        prev_char = doc.characterAt(pos - 1)
+        next_char = doc.characterAt(pos)
+        
+        pairs = {**self._BRACKET_PAIRS, '"': '"', "'": "'"}
+        
+        if prev_char in pairs and pairs[prev_char] == next_char:
+            cursor.movePosition(cursor.MoveOperation.Left)
+            cursor.movePosition(cursor.MoveOperation.Right, cursor.MoveMode.KeepAnchor, 2)
+            cursor.removeSelectedText()
+            return True
+        
+        return False
+    
+    def _handle_tab_jump(self) -> bool:
+        """Jump cursor past closing bracket/quote if inside a pair."""
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            return False
+        
+        doc = self.document()
+        pos = cursor.position()
+        
+        if pos >= doc.characterCount():
+            return False
+        
+        next_char = doc.characterAt(pos)
+        
+        if next_char in self._CLOSING_BRACKETS or next_char in self._QUOTE_CHARS:
+            cursor.movePosition(cursor.MoveOperation.Right)
+            self.setTextCursor(cursor)
+            return True
+        
+        return False
+    
+    def _handle_enter_key(self):
+        """Handle Enter key with bracket-aware automatic indentation."""
+        cursor = self.textCursor()
+        current_line = cursor.block().text()
+        col = cursor.positionInBlock()
+        
+        text_before = current_line[:col]
+        text_after = current_line[col:]
+        
+        base_indent = self._get_leading_whitespace(current_line)
+        indent_unit = self._detect_indent_unit()
+        
+        has_unclosed = self._count_unclosed_brackets(text_before) > 0
+        
+        if has_unclosed:
+            new_indent = base_indent + indent_unit
+            
+            stripped_after = text_after.lstrip()
+            if stripped_after and stripped_after[0] in ')]}':
+                cursor.insertText('\n' + new_indent + '\n' + base_indent)
+                cursor.movePosition(cursor.MoveOperation.Up)
+                cursor.movePosition(cursor.MoveOperation.EndOfLine)
+                self.setTextCursor(cursor)
+            else:
+                cursor.insertText('\n' + new_indent)
+        else:
+            adjusted_indent = self._adjust_indent_for_closing(base_indent, text_after, indent_unit)
+            cursor.insertText('\n' + adjusted_indent)
+    
+    def _get_leading_whitespace(self, line: str) -> str:
+        """Extract leading whitespace from a line."""
+        return line[:len(line) - len(line.lstrip())]
+    
+    def _detect_indent_unit(self) -> str:
+        """Detect the indentation unit used in the document (tabs or spaces)."""
+        doc = self.document()
+        for i in range(doc.blockCount()):
+            line = doc.findBlockByNumber(i).text()
+            if line.startswith('\t'):
+                return '\t'
+            stripped = line.lstrip()
+            if stripped and line != stripped:
+                ws = line[:len(line) - len(stripped)]
+                spaces = ws.replace('\t', '')
+                if spaces:
+                    space_count = len(spaces)
+                    if space_count >= 2:
+                        return ' ' * min(space_count, 4)
+        return '    '
+    
+    def _count_unclosed_brackets(self, text: str) -> int:
+        """Count net unclosed opening brackets in text."""
+        bracket_pairs = {'(': ')', '[': ']', '{': '}'}
+        closing_to_opening = {v: k for k, v in bracket_pairs.items()}
+        
+        stack = []
+        in_string = None
+        escape = False
+        
+        for char in text:
+            if escape:
+                escape = False
+                continue
+            if char == '\\':
+                escape = True
+                continue
+            if char in '"\'`':
+                if in_string == char:
+                    in_string = None
+                elif in_string is None:
+                    in_string = char
+                continue
+            if in_string:
+                continue
+            if char in bracket_pairs:
+                stack.append(char)
+            elif char in closing_to_opening:
+                if stack and stack[-1] == closing_to_opening[char]:
+                    stack.pop()
+        
+        return len(stack)
+    
+    def _adjust_indent_for_closing(self, base_indent: str, text_after: str, indent_unit: str) -> str:
+        """Adjust indent if text_after starts with closing bracket."""
+        stripped = text_after.lstrip()
+        if stripped and stripped[0] in ')]}':
+            if base_indent.endswith(indent_unit):
+                return base_indent[:-len(indent_unit)]
+        return base_indent
