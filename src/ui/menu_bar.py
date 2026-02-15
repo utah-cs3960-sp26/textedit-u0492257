@@ -87,18 +87,3 @@ def setup_menu_bar(main_window, file_actions):
     toggle_explorer_action.setShortcut("Ctrl+B")
     toggle_explorer_action.triggered.connect(main_window.toggle_file_explorer)
     view_menu.addAction(toggle_explorer_action)
-    
-    return {
-        "new": new_action,
-        "open": open_action,
-        "save": save_action,
-        "save_as": save_as_action,
-        "exit": exit_action,
-        "undo": undo_action,
-        "redo": redo_action,
-        "cut": cut_action,
-        "copy": copy_action,
-        "paste": paste_action,
-        "select_all": select_all_action,
-        "toggle_explorer": toggle_explorer_action,
-    }

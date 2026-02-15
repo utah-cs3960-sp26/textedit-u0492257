@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.splitter)
         self.resize(1000, 600)
         
-        self.actions = setup_menu_bar(self, self.file_actions)
+        setup_menu_bar(self, self.file_actions)
         self.update_title()
     
     def _connect_signals(self):
