@@ -1,6 +1,7 @@
 """Menu bar setup."""
 
 from PyQt6.QtGui import QAction, QKeySequence
+from ui.find_replace_dialog import FindReplaceDialog
 
 
 def setup_menu_bar(main_window, file_actions):
@@ -72,6 +73,19 @@ def setup_menu_bar(main_window, file_actions):
     paste_action.setShortcut(QKeySequence.StandardKey.Paste)
     paste_action.triggered.connect(lambda: get_editor() and get_editor().paste())
     edit_menu.addAction(paste_action)
+    
+    edit_menu.addSeparator()
+    
+    find_replace_action = QAction("&Find and Replace", main_window)
+    find_replace_action.setShortcut("Ctrl+H")
+    def show_find_replace():
+        editor = get_editor()
+        if editor:
+            frame_timer = getattr(main_window, 'frame_timer_widget', None)
+            dialog = FindReplaceDialog(editor, main_window, frame_timer)
+            dialog.exec()
+    find_replace_action.triggered.connect(show_find_replace)
+    edit_menu.addAction(find_replace_action)
     
     edit_menu.addSeparator()
     

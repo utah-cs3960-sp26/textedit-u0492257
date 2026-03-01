@@ -1,5 +1,6 @@
 """Main text editor widget with line numbers."""
 
+import time
 from PyQt6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit
 from PyQt6.QtGui import QFont, QPainter, QColor, QTextFormat
 from PyQt6.QtCore import Qt, QRect, QSize
@@ -29,6 +30,16 @@ class TextEditor(QPlainTextEdit):
         self.line_number_area = LineNumberArea(self)
         
         self.syntax_highlighter = SyntaxHighlighter(self.document())
+        
+        # Frame timing
+        self._frame_timer_widget = None
+        self._frame_start_time = None
+        
+        # Performance optimizations
+        self._line_height_cache = {}  # Cache block heights
+        self._cached_line_number_width = None
+        self._cached_digit_count = None
+        self._last_block_count = 0
 
         self._setup_appearance()
         self._connect_signals()
@@ -52,10 +63,17 @@ class TextEditor(QPlainTextEdit):
         self.cursorPositionChanged.connect(self._highlight_current_line)
     
     def line_number_area_width(self):
-        """Calculate the width needed for line numbers."""
-        digits = len(str(max(1, self.blockCount())))
-        space = 3 + self.fontMetrics().horizontalAdvance("9") * max(digits, 3)
-        return space
+        """Calculate the width needed for line numbers (cached)."""
+        block_count = self.blockCount()
+        digits = len(str(max(1, block_count)))
+        
+        # Only recalculate if block count changes
+        if block_count != self._last_block_count or self._cached_digit_count != digits:
+            self._cached_digit_count = digits
+            self._last_block_count = block_count
+            self._cached_line_number_width = 3 + self.fontMetrics().horizontalAdvance("9") * max(digits, 3)
+        
+        return self._cached_line_number_width if self._cached_line_number_width else 50
     
     def _update_line_number_area_width(self):
         """Update editor margins to accommodate line numbers."""
@@ -95,35 +113,62 @@ class TextEditor(QPlainTextEdit):
         self.setExtraSelections(extra_selections)
     
     def line_number_area_paint_event(self, event):
-        """Paint the line numbers."""
+        """Paint the line numbers (optimized for visible lines only)."""
+        self._start_frame_timing()
+        
         painter = QPainter(self.line_number_area)
         painter.fillRect(event.rect(), QColor(30, 30, 30))
         
+        # Only paint lines in the event rect
         block = self.firstVisibleBlock()
         block_number = block.blockNumber()
         top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
-        bottom = top + int(self.blockBoundingRect(block).height())
         
-        while block.isValid() and top <= event.rect().bottom():
-            if block.isVisible() and bottom >= event.rect().top():
-                number = str(block_number + 1)
-                painter.setPen(QColor(100, 100, 100))
-                painter.drawText(
-                    0, top,
-                    self.line_number_area.width() - 5,
-                    self.fontMetrics().height(),
-                    Qt.AlignmentFlag.AlignRight,
-                    number
-                )
+        font_height = self.fontMetrics().height()
+        event_bottom = event.rect().bottom()
+        event_top = event.rect().top()
+        
+        painter.setPen(QColor(100, 100, 100))
+        area_width = self.line_number_area.width()
+        
+        # Only iterate through visible lines
+        while block.isValid() and top <= event_bottom:
+            if top + font_height >= event_top:  # Only paint if in view
+                if block.isVisible():
+                    number = str(block_number + 1)
+                    painter.drawText(
+                        0, top,
+                        area_width - 5,
+                        font_height,
+                        Qt.AlignmentFlag.AlignRight,
+                        number
+                    )
             
             block = block.next()
-            top = bottom
-            bottom = top + int(self.blockBoundingRect(block).height())
+            top += int(self.blockBoundingRect(block).height())
             block_number += 1
+        
+        self._end_frame_timing()
     
     def set_syntax_language(self, language):
         """Set the syntax highlighting language."""
         self.syntax_highlighter.set_language(language)
+    
+    def set_frame_timer_widget(self, widget):
+        """Set the frame timer widget for performance monitoring."""
+        self._frame_timer_widget = widget
+    
+    def _start_frame_timing(self):
+        """Start measuring frame time."""
+        if self._frame_timer_widget and self._frame_timer_widget.is_visible():
+            self._frame_start_time = time.time()
+    
+    def _end_frame_timing(self):
+        """End frame timing and record the measurement."""
+        if self._frame_start_time is not None and self._frame_timer_widget and self._frame_timer_widget.is_visible():
+            frame_time_ms = (time.time() - self._frame_start_time) * 1000
+            self._frame_timer_widget.record_frame(frame_time_ms)
+            self._frame_start_time = None
 
     _BRACKET_PAIRS = {'(': ')', '[': ']', '{': '}'}
     _QUOTE_CHARS = {'"', "'"}

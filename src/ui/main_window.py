@@ -1,12 +1,14 @@
 """Main application window."""
 
-from PyQt6.QtWidgets import QMainWindow, QSplitter
+from PyQt6.QtWidgets import QMainWindow, QSplitter, QVBoxLayout, QWidget
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QKeySequence, QShortcut
 
 from actions.file_actions import FileActions
 from ui.menu_bar import setup_menu_bar
 from ui.file_explorer import FileExplorer
 from ui.split_view import SplitViewManager
+from ui.frame_timer import FrameTimerWidget
 
 
 class MainWindow(QMainWindow):
@@ -21,6 +23,10 @@ class MainWindow(QMainWindow):
         self.file_explorer = FileExplorer(self)
         self.file_actions = FileActions(self)
         
+        # Create frame timer widget
+        self.frame_timer_widget = FrameTimerWidget()
+        self.frame_timer_widget.hide()
+        
         self._setup_ui()
         self._connect_signals()
     
@@ -31,6 +37,12 @@ class MainWindow(QMainWindow):
     
     def _setup_ui(self):
         """Initialize the user interface."""
+        # Create central widget with layout
+        central_widget = QWidget()
+        central_layout = QVBoxLayout()
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        
         # Create splitter for file explorer and split view manager
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.file_explorer)
@@ -41,15 +53,42 @@ class MainWindow(QMainWindow):
         self.splitter.setCollapsible(0, True)
         self.splitter.setCollapsible(1, False)
         
-        self.setCentralWidget(self.splitter)
+        # Add splitter and frame timer to layout
+        central_layout.addWidget(self.splitter)
+        central_layout.addWidget(self.frame_timer_widget)
+        
+        central_widget.setLayout(central_layout)
+        self.setCentralWidget(central_widget)
         self.resize(1000, 600)
         
         setup_menu_bar(self, self.file_actions)
         self.update_title()
+        
+        # Set up Ctrl-P shortcut for frame timer toggle
+        self.frame_timer_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
+        self.frame_timer_shortcut.activated.connect(self.toggle_frame_timer)
+        
+        # Connect to tab changes to set frame timer on new editors
+        self.split_view_manager.tab_widget.currentChanged.connect(self._on_editor_changed)
+        self._set_frame_timer_on_current_editor()
     
     def _connect_signals(self):
         """Connect signals to update window state."""
         self.file_explorer.file_selected.connect(self._on_file_selected)
+    
+    def toggle_frame_timer(self):
+        """Toggle frame timer visibility and reset stats."""
+        self.frame_timer_widget.toggle_visibility()
+    
+    def _on_editor_changed(self):
+        """Handle editor tab change."""
+        self._set_frame_timer_on_current_editor()
+    
+    def _set_frame_timer_on_current_editor(self):
+        """Set the frame timer widget on the current editor."""
+        editor = self.editor
+        if editor:
+            editor.set_frame_timer_widget(self.frame_timer_widget)
     
     def _on_file_selected(self, file_path):
         """Open file selected from file explorer in a new tab."""

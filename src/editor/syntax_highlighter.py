@@ -18,6 +18,10 @@ class SyntaxHighlighter(QSyntaxHighlighter):
         self._multiline_patterns = []  # (TokenType, start_re, end_re) compiled
         self._formats = {}
         self._build_formats()
+        
+        # Performance optimization: lazy highlighting
+        self._lazy_highlight = True  # Enable lazy highlighting for large files
+        self._last_highlighted_block = -1
 
     def _build_formats(self):
         """Build QTextCharFormat for each token type."""
@@ -54,8 +58,8 @@ class SyntaxHighlighter(QSyntaxHighlighter):
         return self._language
 
     def highlightBlock(self, text):
-        """Highlight a single block of text."""
-        if not self._language:
+        """Highlight a single block of text (with optimization for empty blocks)."""
+        if not self._language or not text or not text.strip():
             return
 
         # Track which character positions are already highlighted
