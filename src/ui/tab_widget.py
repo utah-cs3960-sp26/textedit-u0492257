@@ -156,21 +156,51 @@ class TabWidget(QTabWidget):
         # Create initial tab
         self.new_tab()
     
+    def _load_file_content(self, tab, file_path):
+        """Load file content with performance optimizations for large files."""
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            line_count = content.count('\n') + 1
+            is_large = line_count > 50000
+            
+            # Disable undo during load
+            tab.editor.setUndoRedoEnabled(False)
+            
+            # Suspend highlighting for large files
+            if is_large:
+                tab.editor.syntax_highlighter.suspend()
+            
+            tab.editor.setPlainText(content)
+            tab.document.file_path = file_path
+            tab.document.is_modified = False
+            
+            # Set language
+            language = LanguageDetector.detect_language(file_path)
+            if is_large:
+                tab.editor.set_syntax_language(language, rehighlight_now=False)
+                tab.editor.syntax_highlighter.resume()
+                # Highlight only visible blocks
+                first = tab.editor.firstVisibleBlock()
+                last_num = first.blockNumber() + 50  # visible + margin
+                tab.editor.syntax_highlighter.highlight_visible_blocks(first.blockNumber(), last_num)
+            else:
+                tab.editor.set_syntax_language(language)
+            
+            # Re-enable undo
+            tab.editor.setUndoRedoEnabled(True)
+            
+            return True
+        except Exception:
+            return False
+    
     def new_tab(self, file_path=None):
         """Create a new editor tab."""
         tab = EditorTab()
         
         if file_path:
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                tab.editor.setPlainText(content)
-                tab.document.file_path = file_path
-                tab.document.is_modified = False
-                language = LanguageDetector.detect_language(file_path)
-                tab.editor.set_syntax_language(language)
-            except Exception:
-                pass
+            self._load_file_content(tab, file_path)
         
         self._tabs.append(tab)
         index = self.addTab(tab.editor, tab.document.display_name)
@@ -253,19 +283,11 @@ class TabWidget(QTabWidget):
             not current.document.is_modified and 
             current.document.file_path is None and
             not current.editor.toPlainText()):
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                current.editor.setPlainText(content)
-                current.document.file_path = file_path
-                current.document.is_modified = False
-                language = LanguageDetector.detect_language(file_path)
-                current.editor.set_syntax_language(language)
+            if self._load_file_content(current, file_path):
                 self._update_tab_title(current)
                 self.current_document_changed.emit()
                 return True
-            except Exception:
-                return False
+            return False
         
         # Otherwise create new tab
         tab = self.new_tab(file_path)

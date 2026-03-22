@@ -103,7 +103,7 @@ class FrameTimerWidget(QWidget):
         # Set monospace font
         font = QFont()
         font.setStyleHint(QFont.StyleHint.Monospace)
-        font.setFamilies(["Courier New", "Consolas", "DejaVu Sans Mono", "monospace"])
+        font.setFamilies(["Menlo", "Courier New", "Consolas", "DejaVu Sans Mono"])
         font.setPointSize(9)
         
         for label in [self.last_frame_label, self.avg_frame_label, self.max_frame_label]:

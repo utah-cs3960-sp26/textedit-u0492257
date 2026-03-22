@@ -44,12 +44,15 @@ class TextEditor(QPlainTextEdit):
         self._setup_appearance()
         self._connect_signals()
         self._update_line_number_area_width()
+        
+        # Disable line wrapping for consistent line height and fast scrolling
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
     
     def _setup_appearance(self):
         """Configure the vintage terminal look."""
         font = QFont()
         font.setStyleHint(QFont.StyleHint.Monospace)
-        font.setFamilies(["Courier New", "Consolas", "DejaVu Sans Mono", "Liberation Mono", "monospace"])
+        font.setFamilies(["Menlo", "Courier New", "Consolas", "DejaVu Sans Mono", "Liberation Mono"])
         font.setPointSize(12)
         font.setFixedPitch(True)
         self.setFont(font)
@@ -61,6 +64,7 @@ class TextEditor(QPlainTextEdit):
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.cursorPositionChanged.connect(self._highlight_current_line)
+        self.updateRequest.connect(self._highlight_visible_on_scroll)
     
     def line_number_area_width(self):
         """Calculate the width needed for line numbers (cached)."""
@@ -150,9 +154,20 @@ class TextEditor(QPlainTextEdit):
         
         self._end_frame_timing()
     
-    def set_syntax_language(self, language):
+    def _highlight_visible_on_scroll(self, rect, dy):
+        """Highlight visible blocks on scroll for large files with deferred highlighting."""
+        if self.blockCount() <= 50000:
+            return
+        if not dy:
+            return
+        block = self.firstVisibleBlock()
+        first_num = block.blockNumber()
+        last_num = first_num + 50
+        self.syntax_highlighter.highlight_visible_blocks(first_num, last_num)
+    
+    def set_syntax_language(self, language, rehighlight_now=True):
         """Set the syntax highlighting language."""
-        self.syntax_highlighter.set_language(language)
+        self.syntax_highlighter.set_language(language, rehighlight_now=rehighlight_now)
     
     def set_frame_timer_widget(self, widget):
         """Set the frame timer widget for performance monitoring."""

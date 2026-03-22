@@ -3,9 +3,10 @@
 import time
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QMessageBox
+    QPushButton, QMessageBox, QApplication
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QTextCursor
 
 
 class FindReplaceDialog(QDialog):
@@ -75,7 +76,7 @@ class FindReplaceDialog(QDialog):
             )
     
     def _replace_all(self):
-        """Replace all occurrences with frame timing."""
+        """Replace all occurrences with batched QTextCursor replacements."""
         search_text = self.find_input.text()
         replace_text = self.replace_input.text()
         
@@ -84,7 +85,19 @@ class FindReplaceDialog(QDialog):
             return
         
         doc_text = self.editor.toPlainText()
-        match_count = doc_text.count(search_text)
+        
+        # Find all non-overlapping match positions
+        spans = []
+        search_len = len(search_text)
+        start = 0
+        while True:
+            idx = doc_text.find(search_text, start)
+            if idx == -1:
+                break
+            spans.append((idx, idx + search_len))
+            start = idx + search_len
+        
+        match_count = len(spans)
         
         if match_count == 0:
             QMessageBox.information(self, "Replace", f"No matches found for '{search_text}'.")
@@ -94,32 +107,76 @@ class FindReplaceDialog(QDialog):
         if self.frame_timer_widget and self.frame_timer_widget.is_visible():
             self.frame_timer_widget.reset()
         
-        # Perform replacement with timing
-        from PyQt6.QtWidgets import QApplication
+        # Reverse spans so we replace from end to start, preserving earlier offsets
+        spans.reverse()
         
-        start_time = time.time()
+        # Store state for batch processing
+        self._replace_spans = spans
+        self._replace_text = replace_text
+        self._replace_count = match_count
+        self._replace_start_time = time.time()
         
-        # Do replacement
-        new_text = doc_text.replace(search_text, replace_text)
+        # Suspend syntax highlighter
+        highlighter = self.editor.syntax_highlighter
+        highlighter.suspend()
         
-        # Time the setPlainText operation
-        set_text_start = time.time()
-        self.editor.setPlainText(new_text)
-        set_text_time = (time.time() - set_text_start) * 1000
+        # Disable undo/redo
+        self.editor.setUndoRedoEnabled(False)
         
-        # Force repaint and process events to capture render frames
-        for _ in range(10):
-            QApplication.processEvents()
-            time.sleep(0.001)
+        # Start batch processing
+        QTimer.singleShot(0, self._process_replace_batch)
+    
+    def _process_replace_batch(self):
+        """Process a batch of replacements within a time budget."""
+        BATCH_TIME_BUDGET = 0.008  # ~8ms per batch
         
-        elapsed = time.time() - start_time
+        cursor = QTextCursor(self.editor.document())
+        cursor.beginEditBlock()
         
-        # Record the setText operation as a frame if no frames were captured
+        batch_start = time.time()
+        while self._replace_spans and (time.time() - batch_start) < BATCH_TIME_BUDGET:
+            start, end = self._replace_spans.pop()
+            cursor.setPosition(start)
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            cursor.insertText(self._replace_text)
+        
+        cursor.endEditBlock()
+        
+        QApplication.processEvents()
+        
+        if self._replace_spans:
+            # Schedule next batch
+            QTimer.singleShot(0, self._process_replace_batch)
+        else:
+            # All replacements done — finalize
+            self._finish_replace()
+    
+    def _finish_replace(self):
+        """Finalize replace-all after all batches complete."""
+        # Resume syntax highlighter
+        highlighter = self.editor.syntax_highlighter
+        highlighter.resume()
+        
+        # For large files, only highlight visible blocks instead of full rehighlight
+        block_count = self.editor.blockCount()
+        if block_count > 50000:
+            first = self.editor.firstVisibleBlock()
+            last_num = first.blockNumber() + 50
+            highlighter.highlight_visible_blocks(first.blockNumber(), last_num)
+        else:
+            highlighter.rehighlight()
+        
+        # Re-enable undo/redo
+        self.editor.setUndoRedoEnabled(True)
+        
+        elapsed = time.time() - self._replace_start_time
+        match_count = self._replace_count
+        
+        # Record frame timing if no frames were captured
         if self.frame_timer_widget and self.frame_timer_widget.is_visible():
             timer = self.frame_timer_widget.timer
-            # If no frames were captured by paint events, record setText time
             if timer._frame_count == 0:
-                timer.record_frame(set_text_time)
+                timer.record_frame(elapsed * 1000)
         
         # Get frame stats
         timer_info = ""
